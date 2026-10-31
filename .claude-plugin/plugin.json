@@ -2,6 +2,9 @@
   "name": "perf",
   "version": "0.1.0",
   "description": "Cuts Claude Code token waste: context/cache status line, output compression, repeat-read guard, /compact prompts, lean rules.",
-  "author": { "name": "Lluc Burland" },
-  "repository": "https://github.com/burlandlluc07-rgb/Performance-All-Round"
+  "author": {
+    "name": "Lluc Burland"
+  },
+  "repository": "https://github.com/burlandlluc07-rgb/Performance-All-Round",
+  "license": "MIT"
 }
