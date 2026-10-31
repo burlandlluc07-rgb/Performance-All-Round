@@ -102,6 +102,8 @@ const edited = new Set<string>()
 let lastFailure: string | undefined
 let nudged = 0 // how many of the two thresholds have been announced this context
 let cacheWarnedFor: number | undefined
+/** Set when a resume already told the person the cache is cold, so the first message does not say it again. */
+let coldResumeTold = false
 let largeReadHinted = false
 let rawDirReady = false
 const session = { compressions: 0, savedChars: 0, readsRefused: 0, readSavedChars: 0 }
@@ -237,7 +239,8 @@ export const register: Register = on => {
     if (mode !== 'off' && !e.command) {
       try {
         const left = cacheRemainingMs(cache, await $.clock.now())
-        if (left !== undefined && left <= 0) {
+        if (coldResumeTold) coldResumeTold = false
+        else if (left !== undefined && left <= 0) {
           const u = await $.session.usage()
           const tokens = u.context.tokens ?? 0
           if (tokens >= CACHE_WARN_MIN_TOKENS) {
@@ -483,6 +486,9 @@ export const register: Register = on => {
     if (e.source === 'compact') contextStartedOver()
     if (mode === 'off') return r
     if ((e.source === 'resume' || e.source === 'fork') && e.prompt_cache_likely_expired) {
+      // The status line has no last response for a resumed session; mark the cache cold rather than leave it blank.
+      cache.lastResponseAt = Number.NEGATIVE_INFINITY
+      await refreshStatus($).catch(() => {})
       const tokens = e.context_tokens ?? 0
       if (tokens >= CACHE_WARN_MIN_TOKENS) {
         const usd = e.estimated_cache_write_usd !== undefined ? ` (~$${e.estimated_cache_write_usd.toFixed(2)})` : ''
@@ -490,6 +496,7 @@ export const register: Register = on => {
           `perf: this session's prompt cache has expired. Your first message will re-write ~${kTokens(tokens)} tokens${usd}. ` +
             'If you only need the gist, /compact <focus> or /clear first.',
         )
+        coldResumeTold = true
       }
     }
     const extra: string[] = []
