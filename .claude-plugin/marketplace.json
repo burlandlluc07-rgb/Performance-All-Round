@@ -1,0 +1,16 @@
+{
+  "name": "performance-all-round",
+  "owner": {
+    "name": "Lluc Burland"
+  },
+  "metadata": {
+    "description": "Performance-All-Round: a Claude Code plugin that cuts token waste."
+  },
+  "plugins": [
+    {
+      "name": "perf",
+      "source": "./",
+      "description": "Token and performance plugin for Claude Code"
+    }
+  ]
+}

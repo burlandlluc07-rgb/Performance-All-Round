@@ -1,2 +1,4 @@
 .claude/token-plus/
 .claude/token-plus-state.json
+.claude-plugin/types/
+.claude/perf/
