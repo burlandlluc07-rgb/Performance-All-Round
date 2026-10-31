@@ -141,7 +141,18 @@ describe('resume warning', () => {
       return { value: undefined }
     })
     on('ui.toast', () => ({ value: undefined }))
+    let status = ''
+    on('ui.status', (_, e) => {
+      status = String((e as { text?: unknown }).text ?? e)
+      return { value: undefined }
+    })
+    mock.clock(on)
+    on('session.usage', () => ({
+      value: { startedAt: 0, context: { tokens: 120_000, window: 200_000, percent: 60 }, rateLimits: [], cost: { usd: 1 } },
+    }))
+    on('agent.list', () => ({ value: [] }))
     on('classic.SessionStart', () => ({}))
+    on('prompt.submit', (_, e) => ({ text: e.text }))
     const base = { session_id: 's', transcript_path: '/t', cwd: '/p', hook_event_name: 'SessionStart' as const }
 
     await $.classic.SessionStart({ ...base, source: 'resume', prompt_cache_likely_expired: false, context_tokens: 120_000 })
@@ -151,5 +162,11 @@ describe('resume warning', () => {
       ...base, source: 'resume', prompt_cache_likely_expired: true, context_tokens: 120_000, estimated_cache_write_usd: 0.9,
     })
     expect(lines.join('\n')).toContain('re-write ~120k tokens (~$0.90)')
+    expect(status).toContain('cache cold')
+
+    // The first message after that resume is not told the same thing again.
+    const before = lines.length
+    await $.prompt.submit({ text: 'carry on' } as never)
+    expect(lines.length).toBe(before)
   })
 })
