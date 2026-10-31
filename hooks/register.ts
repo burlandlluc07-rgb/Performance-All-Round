@@ -18,7 +18,7 @@
 
 import type { EngineInterface, Register, SessionUsage } from 'claude-code'
 import { adviseModel, classifyPrompt, isVague } from './lib/advice.ts'
-import { approxTokens, compressOutput, wantsRaw, type CompressOptions } from './lib/compress.ts'
+import { approxTokens, compressOutput, mcpText, wantsRaw, type CompressOptions } from './lib/compress.ts'
 import { ReadTracker } from './lib/reads.ts'
 import {
   cacheRemainingMs,
@@ -49,6 +49,11 @@ type Config = {
   vaguePromptHint?: boolean
   /** The model/effort advisor (default on). */
   modelAdvisor?: boolean
+  /**
+   * Prompt-cache lifetime in minutes. Guessed otherwise: 60 on a subscription,
+   * 5 on an API key. Set 60 on an API key with the 1-hour cache turned on.
+   */
+  cacheTtlMinutes?: number
 }
 
 const COMPRESS: Record<Exclude<Mode, 'off'>, CompressOptions> = {
@@ -176,7 +181,8 @@ async function saveRaw($: $, label: string, text: string): Promise<string | unde
 async function refreshStatus($: $, usage?: SessionUsage): Promise<void> {
   try {
     const u = usage ?? (await $.session.usage())
-    cache.ttlMs = ttlFor(u)
+    cache.ttlMs =
+      typeof config.cacheTtlMinutes === 'number' && config.cacheTtlMinutes > 0 ? config.cacheTtlMinutes * 60_000 : ttlFor(u)
     const agents = await $.agent.list().catch(() => [])
     const running = agents.filter(a => a.status === 'running' || a.status === 'pending').length
     $.ui.status(formatStatus(u, cache, await $.clock.now(), { savedTokens: savedTokens(), runningAgents: running, mode }))
@@ -339,11 +345,13 @@ export const register: Register = on => {
     const r = await next(e)
     if (mode === 'off' || !e.tool_name.startsWith('mcp__')) return r
     try {
-      const raw = typeof e.tool_response === 'string' ? e.tool_response : JSON.stringify(e.tool_response)
+      // Only text-block responses are replaced: images or structured content pass through.
+      const raw = mcpText(e.tool_response)
+      if (raw === undefined) return r
       const opts = COMPRESS[mode]
       if (!raw || raw.length <= opts.thresholdChars * 2) return r
       const path = await saveRaw($, e.tool_name, raw)
-      const c = compressOutput(raw, { ...opts, thresholdChars: opts.thresholdChars * 2 }, path)
+      const c = compressOutput(raw, { ...opts, thresholdChars: opts.thresholdChars * 2 }, path, '')
       if (!c) return r
       session.compressions += 1
       session.savedChars += c.savedChars
@@ -556,8 +564,8 @@ async function runCheck($: $, command: string, cwd: string): Promise<{ ok: boole
 async function maybeWarnCacheExpiry($: $): Promise<void> {
   if (mode === 'off' || cache.lastResponseAt === undefined || cacheWarnedFor === cache.lastResponseAt) return
   const left = cacheRemainingMs(cache, await $.clock.now())
-  // Only meaningful for the 1-hour cache; the 5-minute one expires during ordinary pauses.
-  if (left === undefined || left <= 0 || left > 3 * 60_000 || cache.ttlMs < 60 * 60_000) return
+  // Not for the 5-minute cache: it expires during ordinary pauses, and a warning every few minutes is noise.
+  if (left === undefined || left <= 0 || left > 3 * 60_000 || cache.ttlMs < 10 * 60_000) return
   const u = await $.session.usage()
   const tokens = u.context.tokens ?? 0
   if (tokens < CACHE_WARN_MIN_TOKENS) return
