@@ -1,6 +1,6 @@
 import type { On } from 'claude-code'
 import { describe, expect, mock, test } from 'claude-code/testing'
-import { compressOutput, wantsRaw } from '../hooks/lib/compress.ts'
+import { compressOutput, mcpText, wantsRaw } from '../hooks/lib/compress.ts'
 import { ReadTracker } from '../hooks/lib/reads.ts'
 import { contextLevel, formatStatus, TTL_SUBSCRIPTION_MS } from '../hooks/lib/status.ts'
 
@@ -119,5 +119,37 @@ describe('hooks', () => {
     await $.session.compact({ trigger: 'manual', messages: [{ role: 'user', text: 'hi', toolUses: [] }] as never, instructions: 'keep the API decisions' })
     expect(told).toContain('keep the API decisions')
     expect(told).toContain('/src/auth.ts')
+  })
+})
+
+describe('mcpText', () => {
+  test('keeps line breaks from text blocks and splits one-line JSON', () => {
+    expect(mcpText([{ type: 'text', text: 'a\nb' }])).toBe('a\nb')
+    expect(mcpText({ content: [{ type: 'text', text: 'x' }, { type: 'text', text: 'y' }] })).toBe('x\ny')
+    expect(mcpText([{ type: 'image', data: '' }])).toBe(undefined)
+    expect(mcpText('{"a":1,"b":[2]}')!.split('\n').length).toBeGreaterThan(3)
+  })
+})
+
+describe('resume warning', () => {
+  test('resuming a big session with an expired cache tells the person the re-write cost', async ($, on) => {
+    mock.store(on)
+    on('fs.exists', () => ({ value: false }))
+    const lines: string[] = []
+    on('ui.log', (_, e) => {
+      lines.push(String((e as { text?: unknown }).text))
+      return { value: undefined }
+    })
+    on('ui.toast', () => ({ value: undefined }))
+    on('classic.SessionStart', () => ({}))
+    const base = { session_id: 's', transcript_path: '/t', cwd: '/p', hook_event_name: 'SessionStart' as const }
+
+    await $.classic.SessionStart({ ...base, source: 'resume', prompt_cache_likely_expired: false, context_tokens: 120_000 })
+    expect(lines.length).toBe(0)
+
+    await $.classic.SessionStart({
+      ...base, source: 'resume', prompt_cache_likely_expired: true, context_tokens: 120_000, estimated_cache_write_usd: 0.9,
+    })
+    expect(lines.join('\n')).toContain('re-write ~120k tokens (~$0.90)')
   })
 })

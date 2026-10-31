@@ -31,6 +31,8 @@ export function compressOutput(
   text: string,
   opts: CompressOptions,
   rawPath: string | undefined,
+  /** How to get the output uncompressed; the Bash default names PERF_RAW=1. */
+  bypass: string = BASH_BYPASS,
 ): Compressed | null {
   if (text.length <= opts.thresholdChars) return null
   const lines = text.split('\n')
@@ -40,7 +42,7 @@ export function compressOutput(
     const half = Math.floor(opts.thresholdChars / 2)
     const head = text.slice(0, half)
     const tail = text.slice(-half)
-    const out = `${head}\n${marker(text.length - head.length - tail.length, 'chars', rawPath)}\n${tail}`
+    const out = `${head}\n${marker(text.length - head.length - tail.length, 'chars', rawPath, bypass)}\n${tail}`
     return out.length < text.length ? { text: out, savedChars: text.length - out.length } : null
   }
 
@@ -54,7 +56,7 @@ export function compressOutput(
   }
   const elided = middle.length - signal.length
   const parts = [...head.map(l => clip(l, 400))]
-  parts.push(marker(elided, 'lines', rawPath))
+  parts.push(marker(elided, 'lines', rawPath, bypass))
   if (signal.length > 0) {
     parts.push(`[perf: ${signal.length} error/warning line(s) from the elided part:]`, ...signal)
   }
@@ -63,9 +65,40 @@ export function compressOutput(
   return out.length < text.length ? { text: out, savedChars: text.length - out.length } : null
 }
 
-function marker(count: number, unit: 'lines' | 'chars', rawPath: string | undefined): string {
+export const BASH_BYPASS = 'Prefix a command with PERF_RAW=1 to skip compression.'
+
+function marker(count: number, unit: 'lines' | 'chars', rawPath: string | undefined, bypass: string): string {
   const where = rawPath ? ` Full output: ${rawPath} (Read a slice with offset/limit if you need it).` : ''
-  return `[perf: ${count} ${unit} elided.${where} Prefix a command with PERF_RAW=1 to skip compression.]`
+  return `[perf: ${count} ${unit} elided.${where}${bypass ? ` ${bypass}` : ''}]`
+}
+
+/**
+ * The text of an MCP tool's response with its line breaks, so compression can
+ * keep error lines: a string, a content-block array or `{ content: [...] }`
+ * of text blocks. Undefined for anything else (images, structured content),
+ * which is left alone. One-line JSON text is re-indented so it splits into lines.
+ */
+export function mcpText(response: unknown): string | undefined {
+  let text: string | undefined
+  if (typeof response === 'string') text = response
+  else {
+    const blocks = Array.isArray(response)
+      ? response
+      : response && typeof response === 'object' && Array.isArray((response as { content?: unknown }).content)
+        ? (response as { content: unknown[] }).content
+        : undefined
+    if (!blocks || !blocks.every(b => b && typeof b === 'object' && (b as { type?: unknown }).type === 'text')) return undefined
+    text = blocks.map(b => String((b as { text?: unknown }).text ?? '')).join('\n')
+  }
+  const t = text.trim()
+  if ((t.startsWith('{') || t.startsWith('[')) && t.split('\n').length < 5) {
+    try {
+      return JSON.stringify(JSON.parse(t), null, 1)
+    } catch {
+      // not JSON after all
+    }
+  }
+  return text
 }
 
 function clip(line: string, max: number): string {
